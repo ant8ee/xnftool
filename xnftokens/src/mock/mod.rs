@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use crate as orml_xtokens;
+use crate as orml_xnftokens;
 
 use scale_info::TypeInfo;
 use serde::{Deserialize, Serialize};
@@ -171,12 +171,37 @@ decl_test_network! {
 
 pub type RelayBalances = pallet_balances::Pallet<relay::Runtime>;
 pub type ParaTokens = orml_tokens::Pallet<para::Runtime>;
-pub type ParaXTokens = orml_xtokens::Pallet<para::Runtime>;
+pub type ParaXNFTokens = orml_xnftokens::Pallet<para::Runtime>;
 
 pub type ParaRelativeTokens = orml_tokens::Pallet<para_relative_view::Runtime>;
 pub type ParaRelativeXTokens = orml_xtokens::Pallet<para_relative_view::Runtime>;
 
 pub type ParaTeleportTokens = orml_tokens::Pallet<para_teleport::Runtime>;
+
+pub fn parent_account_id() -> parachain::AccountId {
+	let location = (Parent,);
+	parachain::LocationToAccountId::convert(location.into()).unwrap()
+}
+
+pub fn child_account_id(para: u32) -> relay_chain::AccountId {
+	let location = (Parachain(para),);
+	relay_chain::LocationToAccountId::convert(location.into()).unwrap()
+}
+
+pub fn child_account_account_id(para: u32, who: sp_runtime::AccountId32) -> relay_chain::AccountId {
+	let location = (Parachain(para), AccountId32 { network: None, id: who.into() });
+	relay_chain::LocationToAccountId::convert(location.into()).unwrap()
+}
+
+pub fn sibling_account_account_id(para: u32, who: sp_runtime::AccountId32) -> parachain::AccountId {
+	let location = (Parent, Parachain(para), AccountId32 { network: None, id: who.into() });
+	parachain::LocationToAccountId::convert(location.into()).unwrap()
+}
+
+pub fn parent_account_account_id(who: sp_runtime::AccountId32) -> parachain::AccountId {
+	let location = (Parent, AccountId32 { network: None, id: who.into() });
+	parachain::LocationToAccountId::convert(location.into()).unwrap()
+}
 
 pub fn para_ext(para_id: u32) -> TestExternalities {
 	use para::{Runtime, System};
@@ -184,7 +209,11 @@ pub fn para_ext(para_id: u32) -> TestExternalities {
 	let mut t = frame_system::GenesisConfig::default()
 		.build_storage::<Runtime>()
 		.unwrap();
-
+pallet_balances::GenesisConfig::<Runtime> {
+		balances: vec![(ALICE, INITIAL_BALANCE), (parent_account_id(), INITIAL_BALANCE)],
+	}
+	.assimilate_storage(&mut t)
+	.unwrap();
 	let parachain_info_config = parachain_info::GenesisConfig {
 		parachain_id: para_id.into(),
 	};
@@ -198,7 +227,11 @@ pub fn para_ext(para_id: u32) -> TestExternalities {
 	.unwrap();
 
 	let mut ext = TestExternalities::new(t);
-	ext.execute_with(|| System::set_block_number(1));
+		ext.execute_with(|| {
+		sp_tracing::try_init_simple();
+		System::set_block_number(1);
+		MsgQueue::set_para_id(para_id.into());
+	});
 	ext
 }
 
@@ -234,13 +267,21 @@ pub fn relay_ext() -> sp_io::TestExternalities {
 		.unwrap();
 
 	pallet_balances::GenesisConfig::<Runtime> {
-		balances: vec![(ALICE, 1_000)],
+			balances: vec![
+			(ALICE, INITIAL_BALANCE),
+			(child_account_id(1), INITIAL_BALANCE),
+			(child_account_id(2), INITIAL_BALANCE),
+		],
 	}
 	.assimilate_storage(&mut t)
 	.unwrap();
 
 	let mut ext = sp_io::TestExternalities::new(t);
-	ext.execute_with(|| System::set_block_number(1));
+		ext.execute_with(|| {
+		System::set_block_number(1);
+		assert_eq!(Uniques::force_create(RuntimeOrigin::root(), 1, ALICE, true), Ok(()));
+		assert_eq!(Uniques::mint(RuntimeOrigin::signed(ALICE), 1, 42, child_account_id(1)), Ok(()));
+	});
 	ext
 }
 

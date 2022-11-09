@@ -188,30 +188,6 @@ pub mod module {
 
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// Transfer native currencies.
-		///
-		/// `dest_weight` is the weight for XCM execution on the dest chain, and
-		/// it would be charged from the transferred assets. If set below
-		/// requirements, the execution may fail and assets wouldn't be
-		/// received.
-		///
-		/// It's a no-op if any error on local XCM execution or message sending.
-		/// Note sending assets out per se doesn't guarantee they would be
-		/// received. Receiving depends on if the XCM message could be delivered
-		/// by the network, and if the receiving chain would handle
-		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer(currency_id.clone(), *amount, dest))]
-		pub fn transfer(
-			origin: OriginFor<T>,
-			currency_id: T::CurrencyId,
-			amount: T::Balance,
-			dest: Box<VersionedMultiLocation>,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			let who = ensure_signed(origin)?;
-			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
-			Self::do_transfer(who, currency_id, amount, dest, dest_weight)
-		}
 
 		/// Transfer `MultiAsset`.
 		///
@@ -236,42 +212,6 @@ pub mod module {
 			let asset: MultiAsset = (*asset).try_into().map_err(|()| Error::<T>::BadVersion)?;
 			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
 			Self::do_transfer_multiasset(who, asset, dest, dest_weight)
-		}
-
-		/// Transfer native currencies specifying the fee and amount as
-		/// separate.
-		///
-		/// `dest_weight` is the weight for XCM execution on the dest chain, and
-		/// it would be charged from the transferred assets. If set below
-		/// requirements, the execution may fail and assets wouldn't be
-		/// received.
-		///
-		/// `fee` is the amount to be spent to pay for execution in destination
-		/// chain. Both fee and amount will be subtracted form the callers
-		/// balance.
-		///
-		/// If `fee` is not high enough to cover for the execution costs in the
-		/// destination chain, then the assets will be trapped in the
-		/// destination chain
-		///
-		/// It's a no-op if any error on local XCM execution or message sending.
-		/// Note sending assets out per se doesn't guarantee they would be
-		/// received. Receiving depends on if the XCM message could be delivered
-		/// by the network, and if the receiving chain would handle
-		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer(currency_id.clone(), *amount, dest))]
-		pub fn transfer_with_fee(
-			origin: OriginFor<T>,
-			currency_id: T::CurrencyId,
-			amount: T::Balance,
-			fee: T::Balance,
-			dest: Box<VersionedMultiLocation>,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			let who = ensure_signed(origin)?;
-			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
-
-			Self::do_transfer_with_fee(who, currency_id, amount, fee, dest, dest_weight)
 		}
 
 		/// Transfer `MultiAsset` specifying the fee and amount as separate.
@@ -311,34 +251,7 @@ pub mod module {
 			Self::do_transfer_multiasset_with_fee(who, asset, fee, dest, dest_weight)
 		}
 
-		/// Transfer several currencies specifying the item to be used as fee
-		///
-		/// `dest_weight` is the weight for XCM execution on the dest chain, and
-		/// it would be charged from the transferred assets. If set below
-		/// requirements, the execution may fail and assets wouldn't be
-		/// received.
-		///
-		/// `fee_item` is index of the currencies tuple that we want to use for
-		/// payment
-		///
-		/// It's a no-op if any error on local XCM execution or message sending.
-		/// Note sending assets out per se doesn't guarantee they would be
-		/// received. Receiving depends on if the XCM message could be delivered
-		/// by the network, and if the receiving chain would handle
-		/// messages correctly.
-		#[pallet::weight(Pallet::<T>::weight_of_transfer_multicurrencies(currencies, fee_item, dest))]
-		pub fn transfer_multicurrencies(
-			origin: OriginFor<T>,
-			currencies: Vec<(T::CurrencyId, T::Balance)>,
-			fee_item: u32,
-			dest: Box<VersionedMultiLocation>,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			let who = ensure_signed(origin)?;
-			let dest: MultiLocation = (*dest).try_into().map_err(|()| Error::<T>::BadVersion)?;
-
-			Self::do_transfer_multicurrencies(who, currencies, fee_item, dest, dest_weight)
-		}
+		
 
 		/// Transfer several `MultiAsset` specifying the item to be used as fee
 		///
@@ -375,54 +288,7 @@ pub mod module {
 	}
 
 	impl<T: Config> Pallet<T> {
-		fn do_transfer(
-			who: T::AccountId,
-			currency_id: T::CurrencyId,
-			amount: T::Balance,
-			dest: MultiLocation,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			let location: MultiLocation =
-				T::CurrencyIdConvert::convert(currency_id).ok_or(Error::<T>::NotCrossChainTransferableCurrency)?;
-
-			ensure!(!amount.is_zero(), Error::<T>::ZeroAmount);
-			ensure!(
-				T::MultiLocationsFilter::contains(&dest),
-				Error::<T>::NotSupportedMultiLocation
-			);
-
-			let asset: MultiAsset = (location, amount.into()).into();
-			Self::do_transfer_multiassets(who, vec![asset.clone()].into(), asset, dest, dest_weight)
-		}
-
-		fn do_transfer_with_fee(
-			who: T::AccountId,
-			currency_id: T::CurrencyId,
-			amount: T::Balance,
-			fee: T::Balance,
-			dest: MultiLocation,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			let location: MultiLocation =
-				T::CurrencyIdConvert::convert(currency_id).ok_or(Error::<T>::NotCrossChainTransferableCurrency)?;
-
-			ensure!(!amount.is_zero(), Error::<T>::ZeroAmount);
-			ensure!(!fee.is_zero(), Error::<T>::ZeroFee);
-			ensure!(
-				T::MultiLocationsFilter::contains(&dest),
-				Error::<T>::NotSupportedMultiLocation
-			);
-
-			let asset = (location.clone(), amount.into()).into();
-			let fee_asset: MultiAsset = (location, fee.into()).into();
-
-			// Push contains saturated addition, so we should be able to use it safely
-			let mut assets = MultiAssets::new();
-			assets.push(asset);
-			assets.push(fee_asset.clone());
-
-			Self::do_transfer_multiassets(who, assets, fee_asset, dest, dest_weight)
-		}
+		
 
 		fn do_transfer_multiasset(
 			who: T::AccountId,
@@ -450,47 +316,6 @@ pub mod module {
 			Ok(())
 		}
 
-		fn do_transfer_multicurrencies(
-			who: T::AccountId,
-			currencies: Vec<(T::CurrencyId, T::Balance)>,
-			fee_item: u32,
-			dest: MultiLocation,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			ensure!(
-				currencies.len() <= T::MaxAssetsForTransfer::get(),
-				Error::<T>::TooManyAssetsBeingSent
-			);
-			ensure!(
-				T::MultiLocationsFilter::contains(&dest),
-				Error::<T>::NotSupportedMultiLocation
-			);
-
-			let mut assets = MultiAssets::new();
-
-			// Lets grab the fee amount and location first
-			let (fee_currency_id, fee_amount) = currencies
-				.get(fee_item as usize)
-				.ok_or(Error::<T>::AssetIndexNonExistent)?;
-
-			for (currency_id, amount) in &currencies {
-				let location: MultiLocation = T::CurrencyIdConvert::convert(currency_id.clone())
-					.ok_or(Error::<T>::NotCrossChainTransferableCurrency)?;
-				ensure!(!amount.is_zero(), Error::<T>::ZeroAmount);
-
-				// Push contains saturated addition, so we should be able to use it safely
-				assets.push((location, (*amount).into()).into())
-			}
-
-			// We construct the fee now, since getting it from assets wont work as assets
-			// sorts it
-			let fee_location: MultiLocation = T::CurrencyIdConvert::convert(fee_currency_id.clone())
-				.ok_or(Error::<T>::NotCrossChainTransferableCurrency)?;
-
-			let fee: MultiAsset = (fee_location, (*fee_amount).into()).into();
-
-			Self::do_transfer_multiassets(who, assets, fee, dest, dest_weight)
-		}
 
 		fn do_transfer_multiassets(
 			who: T::AccountId,
@@ -930,28 +755,7 @@ pub mod module {
 		}
 	}
 
-	impl<T: Config> XcmTransfer<T::AccountId, T::Balance, T::CurrencyId> for Pallet<T> {
-		#[require_transactional]
-		fn transfer(
-			who: T::AccountId,
-			currency_id: T::CurrencyId,
-			amount: T::Balance,
-			dest: MultiLocation,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			Self::do_transfer(who, currency_id, amount, dest, dest_weight)
-		}
-
-		#[require_transactional]
-		fn transfer_multi_asset(
-			who: T::AccountId,
-			asset: MultiAsset,
-			dest: MultiLocation,
-			dest_weight: Weight,
-		) -> DispatchResult {
-			Self::do_transfer_multiasset(who, asset, dest, dest_weight)
-		}
-	}
+	
 }
 
 /// Returns amount if `asset` is fungible, or zero.
